@@ -315,7 +315,7 @@
             const loadingId = appendLoading();
             
             try {
-                // Backend sunucusuna API isteği - TAM URL KULLANILDI
+                // Backend sunucusuna API isteği
                 const response = await fetch(`${BACKEND_URL}/generate_ai_response`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -348,13 +348,13 @@
                     }
                 } else {
                     // HTTP hatası (500, 404 vb.)
-                    appendAIMessage("Özür dileriz, sunucuya ulaşılamıyor (HTTP Hatası). Lütfen backend sunucusunun durumunu kontrol edin.", true);
+                    appendAIMessage("Özür dileriz, sunucuya ulaşılamıyor (HTTP Hatası). Lütfen backend sunucusunun durumunu kontrol edin. (Bağlantı Adresi: 127.0.0.1:5000)", true);
                 }
 
             } catch (error) {
                 removeElement(loadingId);
                 console.error("Fetch Hatası:", error);
-                appendAIMessage("Ağ bağlantısı kurulamadı. Sunucu adresi kontrol edin veya internet bağlantınızı kontrol edin. TAM URL KULLANIMINA GEÇİLDİ.", true);
+                appendAIMessage("Ağ bağlantısı kurulamadı. Sunucu adresi (127.0.0.1:5000) kontrol edin veya internet bağlantınızı kontrol edin.", true);
             }
             
             isSending = false;
