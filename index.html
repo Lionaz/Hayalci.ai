@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hayelci AI Arayüzü</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Firebase/Firestore Yer Tutucular -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Bu kısım Canvas/Ortam tarafından sağlanır
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        let firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {}; 
+        let initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+
+        window.historyItems = [
+            { id: '1', title: 'Hoş Geldiniz (Lokal Özellik Testi)', date: 'Bugün' }
+        ]; // Simülasyon verisi
+
+        window.initFirestore = async () => {
+             try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.warn("Firestore: Konfigürasyon eksik. Veritabanı işlemleri pasif.");
+                    window.loadInitialHistory();
+                    return;
+                }
+                
+                const app = initializeApp(firebaseConfig);
+                window.db = getFirestore(app);
+                const auth = getAuth(app);
+                
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                window.userId = auth.currentUser.uid;
+                window.firebaseReady = true;
+                console.log("Firestore ve Auth hazırlandı.");
+
+                // Gerçek chat geçmişi yükleme mantığı buraya eklenecektir.
+                window.loadInitialHistory(); 
+
+            } catch (error) {
+                console.error("Firestore başlatma hatası:", error);
+            }
+        };
+
+        window.initFirestore();
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; 
+        }
+
+        .chat-scroll::-webkit-scrollbar { width: 5px; }
+        .chat-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+
+        .sidebar {
+            transition: transform 0.3s ease-in-out;
+            transform: translateX(-100%);
+            background-color: #0a0a0a;
+            border-right: 1px solid #222;
+        }
+        .sidebar.open {
+            transform: translateX(0);
+        }
+
+        .msg-user {
+            background-color: #1a1a1a; 
+            color: white;
+            border-radius: 18px 18px 4px 18px;
+            max-width: 85%;
+            padding: 12px 16px;
+            margin-left: auto;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+
+        .msg-ai {
+            background-color: transparent;
+            color: #e5e5e5;
+            max-width: 100%;
+            padding: 5px 0;
+            margin-right: auto;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .action-btn {
+            background: transparent;
+            border: 1px solid #333;
+            color: #888;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+        .action-btn:hover {
+            border-color: #666;
+            color: #fff;
+        }
+        .action-btn.active {
+            color: #8b5cf6; 
+            border-color: #8b5cf6;
+        }
+
+        .input-bar {
+            background-color: #000;
+            border-top: 1px solid #222;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .app-title {
+            color: #8b5cf6; 
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            font-size: 1.4rem;
+        }
+
+        .typing span {
+            content: '';
+            animation: blink 1.5s infinite;
+            animation-fill-mode: both;
+            height: 5px;
+            width: 5px;
+            background: #8b5cf6;
+            border-radius: 50%;
+            display: inline-block;
+            margin: 0 1px;
+        }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes blink {
+            0% { opacity: 0.2; }
+            20% { opacity: 1; }
+            100% { opacity: 0.2; }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .source-tag {
+            background-color: #1a1a1a;
+            color: #8b5cf6;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .source-tag:hover {
+            background-color: #2a2a2a;
+        }
+    </style>
+</head>
+<body class="flex h-screen flex-col">
+
+    <!-- Modal Yapısı (Onay, Dinleniyor, Hata, Dislike) -->
+    <div id="custom-modal" class="fixed inset-0 z-50 bg-black bg-opacity-70 hidden flex items-center justify-center p-4" onclick="hideModal()">
+        <div class="bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-2xl" onclick="event.stopPropagation()">
+            <h3 id="modal-title" class="text-xl font-bold mb-3 text-white">Başlık</h3>
+            <p id="modal-message" class="text-gray-400 mb-4 text-sm"></p>
+            <textarea id="modal-input" class="w-full bg-zinc-800 text-white rounded-lg p-3 resize-none focus:ring-2 focus:ring-purple-500 outline-none h-20 mb-4 hidden" placeholder="Açıklamanız..."></textarea>
+            <div id="modal-actions" class="flex justify-end gap-3">
+                <!-- Butonlar JS ile dinamik olarak eklenecek -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar (Geçmiş) -->
+    <div id="sidebar" class="sidebar fixed inset-y-0 left-0 w-64 z-40 flex flex-col shadow-2xl">
+        <div class="p-4 border-b border-gray-800 flex justify-between items-center">
+            <span class="text-gray-400 font-bold text-sm">GEÇMİŞ KONUŞMALAR</span>
+            <button onclick="toggleSidebar()" class="text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="history-list" class="flex-1 overflow-y-auto p-2 space-y-2">
+            <div class="text-center p-4 text-gray-600">Geçmiş yükleniyor...</div>
+        </div>
+        <div class="p-4 border-t border-gray-800 text-xs text-center text-gray-600">
+            v2.0 • Backend-powered Hayelci
+        </div>
+    </div>
+
+    <!-- Overlay for Sidebar -->
+    <div id="sidebar-overlay" onclick="toggleSidebar()" class="fixed inset-0 bg-black bg-opacity-80 z-30 backdrop-blur-sm hidden"></div>
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-3 bg-black z-20 sticky top-0">
+        <button onclick="toggleSidebar()" class="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-white active:scale-95 transition">
+            <i class="fas fa-bars"></i>
+        </button>
+
+        <div class="app-title select-none">hayelci.ai</div>
+
+        <!-- Yeni Sohbet Butonu (Çalışıyor) -->
+        <button onclick="confirmNewChat()" class="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-white active:scale-95 transition">
+            <i class="fas fa-pen-to-square"></i>
+        </button>
+    </div>
+
+    <!-- Main Chat Area -->
+    <div id="chat-container" class="flex-1 chat-scroll overflow-y-auto px-4 py-2 relative flex flex-col gap-4 z-10">
+        <div id="welcome-screen" class="absolute inset-0 flex flex-col items-center justify-center text-center px-6 transition-opacity duration-300">
+            <div class="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mb-6">
+                <i class="fas fa-robot text-3xl text-purple-500"></i>
+            </div>
+            <h2 class="text-2xl font-bold font-bold mb-2">Merhaba, ben Hayelci.</h2>
+            <p class="text-gray-500 text-sm max-w-xs">Gelişmiş AI modelim ile tüm sorularınızı yanıtlamaya hazırım. Lütfen bir komut girin.</p>
+        </div>
+    </div>
+
+    <!-- Dosya Yükleme Önizleme Alanı -->
+    <div id="file-preview-area" class="px-4 hidden"></div>
+
+    <!-- Input Area -->
+    <div class="input-bar px-4 py-3 flex items-end gap-2 z-20">
+        <input type="file" id="file-input" class="hidden" accept=".txt,.pdf,.js,.py,.html,.css,.md">
+        <button onclick="document.getElementById('file-input').click()" class="w-10 h-10 rounded-full bg-zinc-900 text-gray-400 flex-shrink-0 flex items-center justify-center hover:text-white transition">
+            <i class="fas fa-plus"></i>
+        </button>
+
+        <div class="flex-1 bg-zinc-900 rounded-3xl flex items-center px-4 py-1 relative">
+            <textarea id="user-input" rows="1" placeholder="Bir şeyler yaz..." 
+                class="w-full bg-transparent border-none text-white outline-none py-3 resize-none max-h-32"
+                oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; toggleSendButton();"
+                onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }"></textarea>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Mikrofon Butonu (Lokal Çalışıyor) -->
+            <button id="mic-btn" onclick="toggleSpeechRecognition()" class="w-10 h-10 rounded-full bg-zinc-900 text-white flex items-center justify-center active:scale-90 transition">
+                <i class="fas fa-microphone"></i>
+            </button>
+            
+            <button id="send-btn" onclick="sendMessage()" class="w-10 h-10 rounded-full bg-purple-600 text-white flex items-center justify-center active:scale-90 transition shadow-lg shadow-purple-900/50 hidden">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Script Logic (Etkileşimler ve Lokal API'ler) -->
+    <script>
+        // --- 1. STATE & DOM ---
+        let currentChatId = null;
+        let currentFileContent = "";
+        let isSending = false;
+        let activeDislikeButton = null;
+        let recognition = null; 
+        let isListening = false;
+        let ttsActiveButton = null;
+        
+        // ÖNEMLİ DÜZELTME: Backend'in tam adresini tanımla
+        const BACKEND_URL = 'http://127.0.0.1:5000'; 
+
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const welcomeScreen = document.getElementById('welcome-screen');
+        const filePreviewArea = document.getElementById('file-preview-area');
+        const modal = document.getElementById('custom-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalInput = document.getElementById('modal-input');
+        const modalActions = document.getElementById('modal-actions');
+        const historyList = document.getElementById('history-list');
+
+        // --- 2. INITIALIZATION ---
+        window.onload = () => {
+            startNewChat(false);
+            initializeSTT();
+        };
+
+        // --- 3. CORE CHAT LOGIC (Güncellendi) ---
+
+        async function sendMessage() {
+            if (isSending) return;
+            const text = userInput.value.trim();
+            if (!text && !currentFileContent) return;
+
+            isSending = true;
+            toggleSendButton();
+            
+            welcomeScreen.style.opacity = '0';
+            setTimeout(() => welcomeScreen.style.display = 'none', 300);
+            
+            appendUserMessage(text || "Dosya gönderildi.");
+            const userQuery = text;
+            userInput.value = '';
+            userInput.style.height = 'auto';
+            
+            const loadingId = appendLoading();
+            
+            try {
+                // Backend sunucusuna API isteği - TAM URL KULLANILDI
+                const response = await fetch(`${BACKEND_URL}/generate_ai_response`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        query: userQuery, 
+                        file_content: currentFileContent 
+                    })
+                });
+
+                removeElement(loadingId);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        let aiResponse = data.text;
+                        
+                        // Kaynakları mesaja ekle
+                        if (data.sources && data.sources.length > 0) {
+                            const sourceHtml = data.sources.map((src, index) => 
+                                `<a href="${src.uri}" target="_blank" class="source-tag mr-2 mt-2">${index + 1}. ${src.title}</a>`
+                            ).join('');
+                            aiResponse += `<div class="mt-4 flex flex-wrap gap-2">${sourceHtml}</div>`;
+                        }
+                        
+                        appendAIMessage(aiResponse);
+                        
+                    } else {
+                        // Sunucudan gelen özel hata mesajını göster
+                        appendAIMessage(data.error, true); 
+                    }
+                } else {
+                    // HTTP hatası (500, 404 vb.)
+                    appendAIMessage("Özür dileriz, sunucuya ulaşılamıyor (HTTP Hatası). Lütfen backend sunucusunun durumunu kontrol edin.", true);
+                }
+
+            } catch (error) {
+                removeElement(loadingId);
+                console.error("Fetch Hatası:", error);
+                appendAIMessage("Ağ bağlantısı kurulamadı. Sunucu adresi kontrol edin veya internet bağlantınızı kontrol edin. TAM URL KULLANIMINA GEÇİLDİ.", true);
+            }
+            
+            isSending = false;
+            toggleSendButton();
+            clearFile();
+        }
+
+        // --- 4. MESSAGE RENDERING & ACTION LOGIC ---
+
+        function appendUserMessage(text) {
+            const div = document.createElement('div');
+            div.className = 'msg-user';
+            div.innerText = text;
+            chatContainer.appendChild(div);
+            scrollToBottom();
+        }
+
+        function appendAIMessage(text, isError = false) {
+            const container = document.createElement('div');
+            container.className = 'w-full mb-6 group';
+            
+            const msgDiv = document.createElement('div');
+            msgDiv.className = isError ? 'text-red-500 font-medium msg-ai' : 'msg-ai';
+            
+            if (!isError) {
+                const formattedText = text
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em class="text-gray-300">$1</em>')
+                    .replace(/\n/g, '<br>');
+                msgDiv.innerHTML = formattedText;
+            } else {
+                msgDiv.innerText = text;
+            }
+            
+            container.appendChild(msgDiv);
+
+            if (!isError && !text.includes('mt-4 flex flex-wrap')) { // Kaynaklar yoksa aksiyonları ekle
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'flex gap-2 mt-2 ml-1 opacity-80';
+                
+                const btnCopy = createActionButton('fa-regular fa-copy', () => copyToClipboard(text, btnCopy));
+                const btnLike = createActionButton('fa-regular fa-thumbs-up', function() { handleLikeDislike(this, 'like'); });
+                const btnDislike = createActionButton('fa-regular fa-thumbs-down', function() { handleDislikeClick(this); });
+                const btnTTS = createActionButton('fa-solid fa-bullhorn', () => speakText(text, btnTTS));
+
+                btnLike.dislikeBtn = btnDislike;
+                btnDislike.likeBtn = btnLike;
+
+                actionsDiv.appendChild(btnCopy);
+                actionsDiv.appendChild(btnLike);
+                actionsDiv.appendChild(btnDislike);
+                actionsDiv.appendChild(btnTTS);
+
+                container.appendChild(actionsDiv);
+            }
+            
+            chatContainer.appendChild(container);
+            scrollToBottom();
+        }
+
+        function createActionButton(iconClass, onClick) {
+            const btn = document.createElement('button');
+            btn.className = 'action-btn';
+            btn.innerHTML = `<i class="${iconClass}"></i>`;
+            btn.onclick = onClick;
+            return btn;
+        }
+
+        // --- 5. LOKAL İŞLEVLER (TTS, STT, Kopyalama) ---
+
+        function copyToClipboard(text, btnElement) {
+            const cleanText = text.replace(/<br>/g, '\n').replace(/<[^>]*>?/gm, '');
+            navigator.clipboard.writeText(cleanText).then(() => {
+                btnElement.innerHTML = '<i class="fas fa-check text-green-500"></i>';
+                setTimeout(() => btnElement.innerHTML = '<i class="fa-regular fa-copy"></i>', 1500);
+            }).catch(err => {
+                showModal('Hata', 'Kopyalama başarısız oldu (Tarayıcı kısıtlaması). Lütfen metni manuel kopyalayın.');
+                console.error("Kopyalama başarısız oldu:", err);
+            });
+        }
+
+        function speakText(text, btnElement) {
+            if (!('speechSynthesis' in window)) {
+                showModal('Hata', 'Tarayıcın sesli okumayı desteklemiyor.');
+                return;
+            }
+
+            if (window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+                if (ttsActiveButton) ttsActiveButton.classList.remove('active');
+                if (ttsActiveButton === btnElement) {
+                     ttsActiveButton = null;
+                     return;
+                }
+            }
+
+            const cleanText = text.replace(/<br>/g, '\n').replace(/<[^>]*>?/gm, '');
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            const voices = window.speechSynthesis.getVoices();
+            const trVoice = voices.find(v => v.lang.startsWith("tr")) || voices.find(v => v.lang.includes("turkish"));
+            
+            if (trVoice) utterance.voice = trVoice;
+            else utterance.lang = 'tr-TR'; 
+
+            ttsActiveButton = btnElement;
+            utterance.onstart = () => btnElement.classList.add('active');
+            utterance.onend = () => {
+                btnElement.classList.remove('active');
+                ttsActiveButton = null;
+            };
+            utterance.onerror = (e) => {
+                console.error("TTS Hatası:", e);
+                btnElement.classList.remove('active');
+                ttsActiveButton = null;
+                showModal('TTS Hatası', 'Seslendirme başlatılamadı.');
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+        
+        function initializeSTT() {
+            window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (window.SpeechRecognition) {
+                recognition = new window.SpeechRecognition();
+                recognition.continuous = false;
+                recognition.lang = 'tr-TR';
+                
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    userInput.value = transcript;
+                    userInput.style.height = 'auto';
+                    userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+                    userInput.focus();
+                    toggleSendButton();
+                };
+
+                recognition.onend = () => {
+                    micBtn.classList.remove('active');
+                    isListening = false;
+                };
+
+                recognition.onerror = (event) => {
+                    micBtn.classList.remove('active');
+                    isListening = false;
+                    console.error('STT Hatası:', event.error);
+                    if (event.error !== 'no-speech') {
+                         showModal('Mikrofon Hatası', `Sesli giriş başarısız: ${event.error}. İzinleri kontrol edin.`);
+                    }
+                };
+            } else {
+                micBtn.disabled = true;
+                micBtn.classList.add('opacity-50');
+            }
+        }
+
+        function toggleSpeechRecognition() {
+            if (!recognition) {
+                 showModal('Hata', 'Tarayıcınız Sesli Metin Çevirme (STT) özelliğini desteklemiyor.');
+                 return;
+            }
+            if (isListening) {
+                recognition.stop();
+                isListening = false;
+            } else {
+                recognition.start();
+                micBtn.classList.add('active');
+                isListening = true;
+                showModal('Dinleniyor', 'Lütfen konuşun. Otomatik olarak duracaktır.', 'alert');
+            }
+        }
+
+        // --- 6. HISTORY & NAVIGATION & MODAL ---
+        
+        function showModal(title, message, type = 'alert', callback = null) {
+            modalTitle.innerText = title;
+            modalMessage.innerText = message;
+            modalActions.innerHTML = '';
+            modalInput.classList.add('hidden');
+            
+            if (type === 'dislike') {
+                modalInput.classList.remove('hidden');
+                modalInput.value = '';
+                modalActions.innerHTML = `
+                    <button onclick="hideModal()" class="px-4 py-2 text-sm rounded-lg text-gray-400 hover:bg-zinc-800 transition">İptal</button>
+                    <button onclick="submitDislike()" class="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition">Gönder</button>
+                `;
+            } else if (type === 'confirm') {
+                modalActions.innerHTML = `
+                    <button onclick="hideModal()" class="px-4 py-2 text-sm rounded-lg text-gray-400 hover:bg-zinc-800 transition">İptal</button>
+                    <button onclick="hideModal(); ${callback}" class="px-4 py-2 text-sm rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition">Onayla</button>
+                `;
+            } else { // type === 'alert'
+                 modalActions.innerHTML = `
+                    <button onclick="hideModal()" class="px-4 py-2 text-sm rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition">Kapat</button>
+                `;
+            }
+            
+            modal.classList.remove('hidden');
+            if (type === 'dislike') setTimeout(() => modalInput.focus(), 100);
+        }
+
+        function hideModal() {
+            modal.classList.add('hidden');
+            activeDislikeButton = null;
+        }
+
+        function handleDislikeClick(dislikeBtn) {
+            if (dislikeBtn.likeBtn.classList.contains('active')) {
+                handleLikeDislike(dislikeBtn.likeBtn, 'like');
+            }
+            activeDislikeButton = dislikeBtn;
+            showModal('Geri Bildirim', 'Neden beğenmediğinizi belirtin.', 'dislike');
+        }
+
+        function submitDislike() {
+            const reason = modalInput.value.trim();
+            if (reason) {
+                handleLikeDislike(activeDislikeButton, 'dislike');
+                console.log(`Dislike sebebi kaydedildi: "${reason}"`);
+                hideModal();
+            } else {
+                modalInput.placeholder = "Lütfen bir sebep girin.";
+                modalInput.focus();
+            }
+        }
+        
+        function handleLikeDislike(clickedBtn, type) {
+            const isCurrentlyActive = clickedBtn.classList.contains('active');
+            const otherBtn = type === 'like' ? clickedBtn.dislikeBtn : clickedBtn.likeBtn;
+
+            if (otherBtn.classList.contains('active')) {
+                otherBtn.classList.remove('active');
+                otherBtn.innerHTML = type === 'like' ? '<i class="fa-regular fa-thumbs-down"></i>' : '<i class="fa-regular fa-thumbs-up"></i>';
+            }
+
+            clickedBtn.classList.toggle('active', !isCurrentlyActive);
+            if (type === 'like') {
+                clickedBtn.innerHTML = !isCurrentlyActive ? '<i class="fas fa-thumbs-up text-green-500"></i>' : '<i class="fa-regular fa-thumbs-up"></i>';
+                console.log(`Geri bildirim: Cevap ${!isCurrentlyActive ? 'Beğenildi' : 'Beğeni Kaldırıldı'}`);
+            } else {
+                 clickedBtn.innerHTML = !isCurrentlyActive ? '<i class="fas fa-thumbs-down text-red-500"></i>' : '<i class="fa-regular fa-thumbs-down"></i>';
+                 console.log(`Geri bildirim: Cevap ${!isCurrentlyActive ? 'Beğenilmedi' : 'Beğenmeme Kaldırıldı'}`);
+            }
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('hidden');
+        }
+        
+        function confirmNewChat() {
+             showModal('Yeni Sohbet Başlat', 'Mevcut sohbeti sonlandırıp yeni bir konuşma başlatmak istediğinizden emin misiniz?', 'confirm', 'startNewChat(true)');
+        }
+
+        function startNewChat(isLoad = true) {
+            currentChatId = Date.now().toString(); 
+            chatContainer.innerHTML = ''; 
+            chatContainer.appendChild(welcomeScreen);
+            welcomeScreen.style.display = 'flex';
+            welcomeScreen.style.opacity = '1';
+            
+            if (isLoad) loadInitialHistory();
+        }
+        
+        window.loadInitialHistory = () => {
+            historyList.innerHTML = '';
+            if (window.historyItems.length === 0) {
+                historyList.innerHTML = '<div class="text-center p-4 text-gray-600">Henüz sohbet geçmişi yok.</div>';
+                return;
+            }
+
+            window.historyItems.forEach(item => {
+                const button = document.createElement('button');
+                button.className = 'w-full text-left p-3 rounded hover:bg-zinc-800 text-gray-300 text-sm flex justify-between items-center mb-1 transition group';
+                button.setAttribute('data-id', item.id);
+                button.onclick = () => { loadChat(item.id); };
+
+                button.innerHTML = `
+                    <div class="flex flex-col overflow-hidden flex-grow">
+                        <span class="font-medium truncate text-white">${item.title}</span>
+                        <span class="text-xs text-gray-600">${item.date}</span>
+                    </div>
+                    <button onclick="confirmDeleteChat(event, '${item.id}', '${item.title}')" class="ml-4 p-2 opacity-0 group-hover:opacity-100 bg-zinc-700/50 rounded-full text-red-400 hover:bg-red-500 hover:text-white transition duration-200 flex-shrink-0">
+                        <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+                `;
+                historyList.appendChild(button);
+            });
+        }
+        
+        function confirmDeleteChat(event, id, title) {
+            event.stopPropagation();
+            showModal('Sohbeti Sil', `"${title}" başlıklı konuşmayı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`, 'confirm', `deleteChat('${id}')`);
+        }
+
+        function deleteChat(id) {
+            window.historyItems = window.historyItems.filter(item => item.id !== id);
+            loadInitialHistory();
+            if (currentChatId === id) {
+                startNewChat();
+            }
+            console.log(`Sohbet ${id} silindi.`);
+        }
+
+
+        function loadChat(id) {
+            currentChatId = id;
+            chatContainer.innerHTML = '';
+            welcomeScreen.style.display = 'none';
+
+            // Simülasyon mesajları
+            appendUserMessage(`Geçmiş sohbet ${id} yüklendi.`);
+            const dummyResponse = "Bu geçmiş bir konuşmanın simülasyonudur. **Lütfen yeni bir komut verin.**";
+            appendAIMessage(dummyResponse);
+            
+            toggleSidebar();
+        }
+        
+        const fileInput = document.getElementById('file-input');
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                currentFileContent = e.target.result;
+                filePreviewArea.innerHTML = `
+                    <div class="file-preview p-2 bg-zinc-900 rounded-lg flex items-center justify-between mb-2">
+                        <div class="flex items-center">
+                            <i class="fas fa-file-alt text-purple-500 mr-2"></i>
+                            <span class="text-sm text-gray-300 truncate">${file.name} (Yüklendi)</span>
+                        </div>
+                        <button onclick="clearFile()" class="ml-2 p-1 text-gray-400 hover:text-red-400"><i class="fas fa-times text-xs"></i></button>
+                    </div>
+                `;
+                filePreviewArea.classList.remove('hidden');
+                toggleSendButton(); 
+            };
+            reader.readAsText(file);
+        });
+
+        function clearFile() {
+            currentFileContent = "";
+            document.getElementById('file-input').value = "";
+            filePreviewArea.innerHTML = "";
+            filePreviewArea.classList.add('hidden');
+            toggleSendButton();
+        }
+
+        // --- 7. UTILITIES ---
+        function appendLoading() {
+            const id = 'loading-' + Date.now();
+            const div = document.createElement('div');
+            div.id = id;
+            div.className = 'msg-ai typing text-gray-500 text-sm mt-2';
+            div.innerHTML = 'Hayelci yanıt oluşturuyor <span></span><span></span><span></span>';
+            chatContainer.appendChild(div);
+            scrollToBottom();
+            return id;
+        }
+
+        function removeElement(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+        }
+
+        function toggleSendButton() {
+            const inputIsEmpty = userInput.value.trim().length === 0 && currentFileContent === "";
+            
+            if (!inputIsEmpty && !isSending) {
+                micBtn.classList.add('hidden');
+                sendBtn.classList.remove('hidden');
+            } else if (isSending) {
+                // Gönderilirken ikisi de gizlenmez, sadece send butonu aktif olur
+            } else {
+                micBtn.classList.remove('hidden');
+                sendBtn.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
+
